@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Market Monitor — учебный стенд</title>
+<style>
+ body{font-family:Arial,Helvetica,sans-serif;margin:24px;color:#1a1a1a;background:#fafafa}
+ h1{font-size:20px;margin:0 0 4px}
+ .sub{color:#666;font-size:13px;margin-bottom:16px}
+ table{border-collapse:collapse;width:100%;background:#fff}
+ th,td{border:1px solid #e2e2e8;padding:6px 10px;font-size:13px;text-align:right}
+ th{background:#f0f0f5;text-align:center}
+ td.t,td.n,td.s{text-align:left}
+ .up{color:#1a7f4b}.down{color:#b3261e}
+ #spinner{padding:40px;text-align:center;color:#888}
+ #cookie{position:fixed;left:0;right:0;bottom:0;background:#222;color:#fff;padding:16px;
+         display:flex;gap:12px;align-items:center;justify-content:center;font-size:13px}
+ #cookie button{padding:8px 16px;border:0;border-radius:4px;cursor:pointer}
+ #more{margin:16px 0;padding:10px 18px;border:0;border-radius:4px;background:#3355cc;color:#fff;
+       font-size:14px;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="cookie" data-testid="cookie-banner">
+  <span>Мы используем cookie для аналитики. Продолжая работу, вы соглашаетесь с политикой обработки данных.</span>
+  <button data-testid="cookie-accept" id="accept">Принять все</button>
+  <button data-testid="cookie-reject" id="reject">Только необходимые</button>
+</div>
+
+<h1 data-testid="page-title">Market Monitor</h1>
+<div class="sub" data-testid="profile-line">профиль: <span id="profile">—</span> · вариант <span id="variant">—</span></div>
+
+<div id="spinner" data-testid="spinner">Загрузка рыночных данных…</div>
+<div id="app" data-testid="app"></div>
+<button id="more" data-testid="load-more" style="display:none">Показать ещё</button>
+<div id="status" data-testid="status"></div>
+
+<script>
+// ------- параметры стенда: профиль и вариант приходят в query-строке -----------------
+const qs = new URLSearchParams(location.search);
+const VARIANT = parseInt(qs.get("variant") || "30", 10);
+const PROFILE = qs.get("profile") || "crypto";
+const DELAY = parseInt(qs.get("delay") || "1200", 10);   // задержка «гидратации»
+const PAGE_SIZE = 12, TOTAL = 30;
+
+// ------- детерминированный генератор: у каждого варианта свои числа -------------------
+function rng(seed){ let s = seed * 9301 + 49297; return () => { s = (s * 9301 + 49297) % 233280; return s / 233280; }; }
+const rnd = rng(VARIANT * 7 + PROFILE.length);
+
+const NAMES = {
+  crypto:   ["BTC","ETH","SOL","TON","XRP","ADA","AVAX","DOT","LINK","MATIC","ATOM","NEAR","APT","ARB","OP",
+             "FIL","ICP","IMX","INJ","SUI","AAVE","GRT","RUNE","SAND","EGLD","FTM","ALGO","HBAR","VET","THETA"],
+  stocks:   ["SBER","GAZP","LKOH","GMKN","YNDX","ROSN","NVTK","TATN","MGNT","MTSS","PLZL","ALRS","CHMF","NLMK","PHOR",
+             "AFLT","VTBR","RUAL","SNGS","IRAO","FEES","HYDR","MOEX","POLY","TRNF","UPRO","OZON","FIVE","SMLT","AGRO"],
+  metals:   ["Li","Co","Ni","Cu","Al","Zn","Pb","Sn","W","Mo","Ti","V","Mn","Cr","Si","Mg","REE-Nd","REE-Pr","Pd","Pt",
+             "Au","Ag","U","Ga","Ge","In","Ta","Nb","Bi","Sb"],
+  ecom:     ["SKU-1001","SKU-1002","SKU-1003","SKU-1004","SKU-1005","SKU-1006","SKU-1007","SKU-1008","SKU-1009","SKU-1010",
+             "SKU-1011","SKU-1012","SKU-1013","SKU-1014","SKU-1015","SKU-1016","SKU-1017","SKU-1018","SKU-1019","SKU-1020",
+             "SKU-1021","SKU-1022","SKU-1023","SKU-1024","SKU-1025","SKU-1026","SKU-1027","SKU-1028","SKU-1029","SKU-1030"],
+  startups: ["Arvo","Brixel","Corvus","Dalta","Elmyr","Fenra","Glide","Hexon","Ionis","Juno","Karbo","Lumen","Mirex",
+             "Nuvo","Orbis","Prisma","Qubit","Ravel","Sygma","Terra","Ultis","Vento","Wexa","Xenia","Yotta","Zephy",
+             "Astra","Borea","Ceres","Dione"],
+};
+const SECTORS = {
+  crypto:   ["L1","L2","DeFi","Infra","GameFi","Stablecoin"],
+  stocks:   ["Финансы","Нефть и газ","Металлургия","Ритейл","Технологии","Энергетика"],
+  metals:   ["Аккумуляторные","Базовые","Редкоземельные","Драгоценные","Легирующие","Ядерные"],
+  ecom:     ["Смартфоны","Ноутбуки","ТВ","Бытовая техника","Аксессуары","Аудио"],
+  startups: ["FinTech","HealthTech","EdTech","LogTech","AgroTech","RetailTech"],
+};
+const CUR = {crypto:"$", stocks:"₽", metals:"$", ecom:"₽", startups:"$"};
+
+function fmtMoney(x, cur){
+  if (cur === "₽"){ return x.toLocaleString("ru-RU", {minimumFractionDigits:2, maximumFractionDigits:2}) + " ₽"; }
+  return "$" + x.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function fmtSuffix(x){
+  if (x >= 1e9) return (x/1e9).toFixed(2) + "B";
+  if (x >= 1e6) return (x/1e6).toFixed(1) + "M";
+  if (x >= 1e3) return (x/1e3).toFixed(1) + "K";
+  return x.toFixed(0);
+}
+function fmtPct(p){
+  const sign = p >= 0 ? "+" : "\u2212";                  // намеренно Unicode-минус
+  return sign + Math.abs(p).toFixed(2).replace(".", (VARIANT % 2 ? "," : ".")) + "%";
+}
+
+const names = NAMES[PROFILE] || NAMES.crypto;
+const sectors = SECTORS[PROFILE] || SECTORS.crypto;
+const cur = CUR[PROFILE] || "$";
+const DATA = [];
+for (let i = 0; i < TOTAL; i++){
+  const price = Math.round((0.5 + rnd() * 900) * 100) / 100;
+  const vol = Math.round(1e4 + rnd() ** 3 * 4e9);
+  const mcap = Math.round(vol * (3 + rnd() * 120));
+  const chg = Math.round((rnd() * 24 - 10) * 100) / 100;
+  const date = new Date(2021, Math.floor(rnd() * 12), 1 + Math.floor(rnd() * 27));
+  DATA.push({
+    rank: i + 1,
+    ticker: names[i % names.length],
+    name: names[i % names.length] + " " + (PROFILE === "ecom" ? "модель" : "Asset"),
+    sector: sectors[i % sectors.length],
+    price: (i === 7) ? "n/a" : fmtMoney(price, cur),          // «грязное» значение
+    change: (i === 13) ? "—" : fmtPct(chg),                   // пропуск
+    volume: fmtSuffix(vol),
+    mcap: fmtSuffix(mcap),
+    listed: date.toLocaleDateString("ru-RU"),
+    price_num: (i === 7) ? null : price,
+    chg_num: (i === 13) ? null : chg / 100,
+    vol_num: vol, mcap_num: mcap,
+  });
+}
+window.__MARKET__ = DATA;                                     // запасной канал для офлайн-режима
+
+let shown = 0;
+function render(){
+  const rows = DATA.slice(0, shown).map(d => `
+    <tr data-testid="asset-row" data-rank="${d.rank}" data-sector="${d.sector}">
+      <td class="t" data-testid="rank">${d.rank}</td>
+      <td class="t" data-testid="ticker">${d.ticker}</td>
+      <td class="n" data-testid="name">${d.name}</td>
+      <td class="s" data-testid="sector">${d.sector}</td>
+      <td data-testid="price">${d.price}</td>
+      <td data-testid="change" class="${d.chg_num >= 0 ? "up" : "down"}">${d.change}</td>
+      <td data-testid="volume">${d.volume}</td>
+      <td data-testid="mcap">${d.mcap}</td>
+      <td data-testid="listed">${d.listed}</td>
+    </tr>`).join("");
+  document.getElementById("app").innerHTML = `
+    <table data-testid="market-table">
+      <thead><tr><th>#</th><th>Тикер</th><th>Название</th><th>Сектор</th><th>Цена</th>
+      <th>24ч</th><th>Объём</th><th>Капитализация</th><th>Листинг</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  document.getElementById("status").textContent = `Показано ${shown} из ${TOTAL}`;
+  document.getElementById("more").style.display = shown < TOTAL ? "inline-block" : "none";
+}
+
+function boot(){
+  document.getElementById("profile").textContent = PROFILE;
+  document.getElementById("variant").textContent = VARIANT;
+  document.getElementById("spinner").remove();
+  shown = PAGE_SIZE;
+  render();
+}
+setTimeout(boot, DELAY);                                      // «гидратация» с задержкой
+
+document.getElementById("more").addEventListener("click", () => {
+  const btn = document.getElementById("more");
+  btn.disabled = true; btn.textContent = "Загрузка…";
+  setTimeout(() => {                                          // подгрузка тоже не мгновенная
+    shown = Math.min(shown + PAGE_SIZE, TOTAL);
+    render();
+    btn.disabled = false; btn.textContent = "Показать ещё";
+  }, 700);
+});
+document.getElementById("accept").addEventListener("click", () => document.getElementById("cookie").remove());
+document.getElementById("reject").addEventListener("click", () => document.getElementById("cookie").remove());
+</script>
+</body>
+</html>
