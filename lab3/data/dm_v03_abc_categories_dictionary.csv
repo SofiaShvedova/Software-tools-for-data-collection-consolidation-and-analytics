@@ -1,0 +1,8 @@
+поле,тип в pandas,тип в DataLens,пример
+category,object,Строка,health_beauty
+revenue,float64,Дробное число,1412089.53
+items,int64,Целое число,9465
+rank_num,int64,Целое число,1
+share_pct,float64,Дробное число,9.1577
+cum_share_pct,float64,Дробное число,9.1577
+abc_class,object,Строка,A
