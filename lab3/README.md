@@ -59,7 +59,7 @@ FROM ranked
 | Доля выручки класса A, % | 79.8 |
 
 ## Дашборд DataLens
-Ссылка: <!-- https://datalens.yandex/dp9fbbecta2sw  -->
+Ссылка: https://datalens.yandex/dp9fbbecta2sw
 
 | № | Тип | Название |
 |---|---|---|
